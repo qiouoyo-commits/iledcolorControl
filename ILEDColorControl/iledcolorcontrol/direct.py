@@ -1,6 +1,7 @@
 import time
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Event, Lock
 from typing import Optional, Sequence, Tuple
 
@@ -34,6 +35,7 @@ PACKET_INDEX_TEST_PASS = 0x0F
 DEFAULT_TEST_PASSWORD = b"\x00" * 6
 DEFAULT_STREAM_PREFIX = b"\x01" + (b"\x00" * 19)
 DEFAULT_MANUFACTURER_ID = 0x5401
+GIF_HEADER_SIGNATURES = (b"GIF87a", b"GIF89a")
 
 
 def short_to_bytes(value: int) -> bytes:
@@ -327,6 +329,72 @@ def build_direct_stream_image_bytes(
     return b"".join(short_to_bytes(word) for word in metadata_words) + bytes(encoded)
 
 
+def parse_gif_logical_screen_size(gif_bytes: bytes) -> Tuple[int, int]:
+    gif_bytes = bytes(gif_bytes)
+    if len(gif_bytes) < 10:
+        raise ValueError("GIF data must be at least 10 bytes long.")
+    if not gif_bytes.startswith(GIF_HEADER_SIGNATURES):
+        raise ValueError("GIF data must start with GIF87a or GIF89a.")
+
+    width = int.from_bytes(gif_bytes[6:8], byteorder="little")
+    height = int.from_bytes(gif_bytes[8:10], byteorder="little")
+    if width <= 0 or height <= 0:
+        raise ValueError("GIF logical screen size must be positive.")
+    return width, height
+
+
+def build_direct_stream_gif_bytes(
+    gif_bytes: bytes,
+    *,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+) -> bytes:
+    """
+    Build a direct-stream GIF payload using the metadata shape inferred from
+    the external Rust reference and validated on real hardware.
+
+    The original GIF file bytes are kept intact and prefixed with GIF-specific
+    metadata before being sent through the same A95x transport used by RGB888
+    direct-stream uploads.
+    """
+
+    gif_bytes = bytes(gif_bytes)
+    parsed_width, parsed_height = parse_gif_logical_screen_size(gif_bytes)
+    width = parsed_width if width is None else int(width)
+    height = parsed_height if height is None else int(height)
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive integers.")
+
+    metadata_words = (
+        0x0000,
+        0x0000,
+        width & 0xFFFF,
+        height & 0xFFFF,
+        0x0000,
+        0x0006,
+        0x0001,
+        0x0064,
+        0x0400,
+        0x0064,
+        0x0000,
+    )
+    return b"".join(short_to_bytes(word) for word in metadata_words) + gif_bytes
+
+
+def build_direct_stream_gif_file_bytes(
+    path,
+    *,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+) -> bytes:
+    gif_path = Path(path)
+    return build_direct_stream_gif_bytes(
+        gif_path.read_bytes(),
+        width=width,
+        height=height,
+    )
+
+
 def build_direct_stream_solid_image_bytes(
     color,
     *,
@@ -349,10 +417,13 @@ def wrap_direct_stream_payload(image_bytes: bytes) -> bytes:
 
 def build_direct_stream_start_packet(image_bytes: bytes) -> bytes:
     image_bytes = bytes(image_bytes)
+    stream_payload = wrap_direct_stream_payload(image_bytes)
+    if len(stream_payload) > 0xFFFF:
+        raise ValueError("Direct-stream payload exceeds the 16-bit length field used by StartStream.")
     payload = (
         crc32c_bytes(image_bytes)
         + b"\x00\x00"
-        + short_to_bytes(len(wrap_direct_stream_payload(image_bytes)))
+        + short_to_bytes(len(stream_payload))
         + b"\x00\x00\x00"
     )
     return build_direct_stream_packet(PACKET_INDEX_START, payload)
@@ -764,6 +835,154 @@ class IledColorController:
                 height=height,
                 gamma_correct=gamma_correct,
             ),
+            chunk_size=chunk_size,
+            password=password,
+            enable_display=enable_display,
+            connect_timeout=connect_timeout,
+            test_pass_timeout=test_pass_timeout,
+            enable_timeout=enable_timeout,
+            start_timeout=start_timeout,
+            chunk_timeout=chunk_timeout,
+            end_timeout=end_timeout,
+            inter_packet_delay=inter_packet_delay,
+            clear_pending=clear_pending,
+        )
+
+    def send_gif(
+        self,
+        gif_bytes: bytes,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        password: bytes = DEFAULT_TEST_PASSWORD,
+        enable_display: bool = False,
+        connect_timeout: float = 1.0,
+        test_pass_timeout: float = 1.0,
+        enable_timeout: float = 1.0,
+        start_timeout: float = 1.0,
+        chunk_timeout: float = 1.0,
+        end_timeout: float = 1.0,
+        inter_packet_delay: float = 0.02,
+        clear_pending: bool = True,
+    ) -> DirectStreamSendResult:
+        return self.send_direct_image(
+            build_direct_stream_gif_bytes(
+                gif_bytes,
+                width=width,
+                height=height,
+            ),
+            chunk_size=chunk_size,
+            password=password,
+            enable_display=enable_display,
+            connect_timeout=connect_timeout,
+            test_pass_timeout=test_pass_timeout,
+            enable_timeout=enable_timeout,
+            start_timeout=start_timeout,
+            chunk_timeout=chunk_timeout,
+            end_timeout=end_timeout,
+            inter_packet_delay=inter_packet_delay,
+            clear_pending=clear_pending,
+        )
+
+    def send_gif_file(
+        self,
+        path,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        password: bytes = DEFAULT_TEST_PASSWORD,
+        enable_display: bool = False,
+        connect_timeout: float = 1.0,
+        test_pass_timeout: float = 1.0,
+        enable_timeout: float = 1.0,
+        start_timeout: float = 1.0,
+        chunk_timeout: float = 1.0,
+        end_timeout: float = 1.0,
+        inter_packet_delay: float = 0.02,
+        clear_pending: bool = True,
+    ) -> DirectStreamSendResult:
+        return self.send_gif(
+            Path(path).read_bytes(),
+            width=width,
+            height=height,
+            chunk_size=chunk_size,
+            password=password,
+            enable_display=enable_display,
+            connect_timeout=connect_timeout,
+            test_pass_timeout=test_pass_timeout,
+            enable_timeout=enable_timeout,
+            start_timeout=start_timeout,
+            chunk_timeout=chunk_timeout,
+            end_timeout=end_timeout,
+            inter_packet_delay=inter_packet_delay,
+            clear_pending=clear_pending,
+        )
+
+    def send_experimental_gif(
+        self,
+        gif_bytes: bytes,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        password: bytes = DEFAULT_TEST_PASSWORD,
+        enable_display: bool = False,
+        connect_timeout: float = 1.0,
+        test_pass_timeout: float = 1.0,
+        enable_timeout: float = 1.0,
+        start_timeout: float = 1.0,
+        chunk_timeout: float = 1.0,
+        end_timeout: float = 1.0,
+        inter_packet_delay: float = 0.02,
+        clear_pending: bool = True,
+    ) -> DirectStreamSendResult:
+        """
+        Backwards-compatible alias for send_gif().
+        """
+        return self.send_gif(
+            gif_bytes,
+            width=width,
+            height=height,
+            chunk_size=chunk_size,
+            password=password,
+            enable_display=enable_display,
+            connect_timeout=connect_timeout,
+            test_pass_timeout=test_pass_timeout,
+            enable_timeout=enable_timeout,
+            start_timeout=start_timeout,
+            chunk_timeout=chunk_timeout,
+            end_timeout=end_timeout,
+            inter_packet_delay=inter_packet_delay,
+            clear_pending=clear_pending,
+        )
+
+    def send_experimental_gif_file(
+        self,
+        path,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        password: bytes = DEFAULT_TEST_PASSWORD,
+        enable_display: bool = False,
+        connect_timeout: float = 1.0,
+        test_pass_timeout: float = 1.0,
+        enable_timeout: float = 1.0,
+        start_timeout: float = 1.0,
+        chunk_timeout: float = 1.0,
+        end_timeout: float = 1.0,
+        inter_packet_delay: float = 0.02,
+        clear_pending: bool = True,
+    ) -> DirectStreamSendResult:
+        """
+        Backwards-compatible alias for send_gif_file().
+        """
+        return self.send_gif_file(
+            path,
+            width=width,
+            height=height,
             chunk_size=chunk_size,
             password=password,
             enable_display=enable_display,

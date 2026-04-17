@@ -26,6 +26,7 @@ Validated capabilities:
 - `RCSP GetTargetInfo`
 - `A95x` direct-stream `Connect -> TestPass -> StartStream -> Continue -> EndStream`
 - solid-color rendering on real hardware
+- GIF upload with device-side loop playback on real hardware
 
 Validated test target:
 
@@ -80,6 +81,15 @@ Probe services and fetch target info:
 ```bash
 python3 ILEDColorControl/examples/target_info.py \
   F419210F-C4C7-BF00-3E7C-0EF7EF1AACC0
+```
+
+GIF upload path:
+
+```bash
+python3 ILEDColorControl/examples/send_gif.py \
+  F419210F-C4C7-BF00-3E7C-0EF7EF1AACC0 \
+  ./demo.gif \
+  --manufacturer-data 424402001000200300000b00060044000000d60508004a4c414953444b
 ```
 
 ## Repository Layout

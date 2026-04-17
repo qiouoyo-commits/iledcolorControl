@@ -9,6 +9,7 @@ This package currently focuses on the parts that are confirmed to work on real h
 - `AE00` RCSP authentication
 - `RCSP GetTargetInfo (0x03)`
 - `A95x` direct-stream rendering
+- GIF upload and device-side loop playback
 - BLE discovery and probing helpers
 - BTSnoop parsing utilities
 
@@ -59,6 +60,15 @@ Probe the device and fetch `TargetInfo`:
 ```bash
 python3 examples/target_info.py \
   F419210F-C4C7-BF00-3E7C-0EF7EF1AACC0
+```
+
+Send a GIF that loops on the device:
+
+```bash
+python3 examples/send_gif.py \
+  F419210F-C4C7-BF00-3E7C-0EF7EF1AACC0 \
+  ./demo.gif \
+  --manufacturer-data 424402001000200300000b00060044000000d60508004a4c414953444b
 ```
 
 ## Package Layout
